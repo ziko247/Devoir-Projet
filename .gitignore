@@ -1,0 +1,14 @@
+# Configuration locale
+/.env
+/.env.*
+!/.env.example
+/.vscode/
+
+# Python
+/.venv/
+__pycache__/
+*.pyc
+
+# Fichiers generes par MaintiDoc
+/.modeles/
+/extraits/
