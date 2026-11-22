@@ -1,93 +1,53 @@
-MaintiDoc est un assistant destiné aux techniciens de maintenance. Il exploite des
-manuels, des procédures, des schémas et des photographies pour répondre à des questions techniques avec des références vérifiables. Il peut consulter l’historique des interventions et préparer un ticket de maintenance. La création effective du ticket nécessite une validation humaine.
+﻿# MaintiDoc
 
-Exemple
-de demande : « Voici une photo du panneau de commande. Que signifie ce voyant orange ?  Consulte les dernières interventions et prépare un ticket si nécessaire. »
+MaintiDoc est un projet de cours autour d'un assistant pour les techniciens de maintenance. L'idée est de retrouver une information dans un manuel, une procédure, un schéma ou une photo, puis de répondre en citant la source. Plus tard, l'assistant pourra consulter l'historique des interventions via MCP et préparer un ticket. Un technicien habilité garde la main sur les équipements et valide la création du ticket.
 
-Objectif général
+Exemple de demande : « Voici une photo du panneau de commande. Que signifie ce voyant orange ? Consulte les dernières interventions et prépare un ticket si nécessaire. »
 
-Construire progressivement un assistant documentaire destiné aux techniciens de maintenance, capable d’exploiter des documents et des photographies, de produire des réponses sourcées, de consulter un historique via MCP et de préparer des tickets soumis à validation humaine. Le système ne pilote aucun équipement et ne remplace pas un technicien habilité.
-Découpage :
-- Étape 1 — RAG Agentique Multi Modal
-- Étape 2 — Fine-Tuning
-- Étape 3 — Orchestration agentique et MCP
-- Étape 4 — Client Web, Telegram/Discord, sécurité et déploiement
+## Installation
 
-Première partie : Travail demandé
-1.   Sélection du document — Choisir un fichier PDF quelconque
-contenant du texte, des images et des tableaux. Un document technique dans le Domaine
-de la maintenance des machines. Pour ne pas se perdre, je vous recommande, dans
-un premier temps, d’utiliser le fichier pdf de l’article “Attention is
-all you need.pdf” ci joint
+Prévoir Python 3.12, Docker et Ollama. Depuis la racine du projet, dans PowerShell :
 
+~~~powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+ollama pull qwen3-embedding:0.6b
+ollama pull qwen3.5:4b
+~~~
 
-2.   Extraction et indexation — Utiliser LlamaIndex pour analyser le PDF et extraire le texte, les
-images et les tableaux. Produire des embeddings avec un modèle open source,
-puis stocker les vecteurs et métadonnées dans PGVector (PostgreSQL).
+Pour une nouvelle installation, copier `.env.example` vers `.env` et renseigner `POSTGRES_PASSWORD` avec un mot de passe local. Démarrer Docker et Ollama, puis lancer PostgreSQL et les scripts dans cet ordre :
 
+~~~powershell
+docker compose -p maintidoc_devoir up -d --wait
+.\.venv\Scripts\python.exe scripts\indexer.py
+.\.venv\Scripts\python.exe scripts\figures.py
+~~~
 
-3.   Traitement des images — Utiliser
-CLIP pour représenter les images et/ou faciliter leur recherche. Générer des
-descriptions textuelles des images et les indexer afin de les rendre
-interrogeables.
+PostgreSQL écoute sur `127.0.0.1:55432`. Docker conserve les données dans un volume. Relancer un script remplace les résultats du même PDF dans une transaction.
 
+## Tester la recherche
 
-4.    Question-réponse et génération — Construire un pipeline RAG avec un LLM open source, par exemple Qwen
-exécuté via Ollama. Récupérer les passages pertinents et produire une réponse
-fondée sur le contexte retrouvé.
+~~~powershell
+.\.venv\Scripts\python.exe scripts\figures.py --question "Quel schéma montre un encodeur et un décodeur ?"
+.\.venv\Scripts\python.exe scripts\figures.py --image chemin\vers\image.png
+~~~
 
+Chaque commande affiche les trois figures les plus proches, avec leur page et leur description. La première cherche dans les descriptions. La seconde compare les images par distance cosinus entre leurs vecteurs CLIP.
 
-5.    Interface utilisateur — Créer
-une interface Streamlit permettant le chargement du PDF, la saisie des
-questions et l’affichage des réponses.
+## Organisation des fichiers
 
+- `data/1706.03762v7.pdf` contient l'article *Attention Is All You Need*, utilisé pour les premiers essais. Le document cible du devoir est un PDF technique de maintenance avec du texte, des images et des tableaux.
+- `scripts/indexer.py` extrait le contenu avec un lecteur LlamaIndex adapté à l'article. Il indexe les fragments, les tableaux et les légendes dans pgvector avec `qwen3-embedding:0.6b`.
+- `scripts/figures.py` encode les PNG avec CLIP ViT-B/32 (512 dimensions). Qwen3.5:4b décrit chaque figure en français à partir de son PNG et de sa légende. `qwen3-embedding:0.6b` encode les descriptions (1 024 dimensions). La table `maintidoc_figures` conserve les deux vecteurs, la description, les modèles, la page et le chemin du PNG.
+- `extraits/` reçoit les PNG et le texte des tableaux. Les PNG gardent les symboles et les exposants visibles pour vérification. `.modeles/` contient le cache CLIP. Les scripts créent ces deux dossiers au besoin.
 
-6.    Orchestration agentique — Rendre
-le RAG agentique avec LangChain : sélection d’outils de recherche,
-interrogation de l’index, gestion du contexte et génération de la réponse.
-Avancement du devoir
--------------------
+## Avancement de la première partie
 
-[x] Étape 1. Document sélectionné : 1706.03762v7.pdf.
-Étape 2. Le script indexer.py utilise un lecteur LlamaIndex adapté aux légendes
-et à la mise en page de cet article. Les figures sont exportées en PNG et les
-tableaux en texte et en PNG dans extraits/. Le texte des légendes sert à
-indexer les figures en attendant le traitement visuel de l'étape 3.
-La version PNG des tableaux conserve les symboles et les exposants.
+- [x] Sélection du PDF de test.
+- [x] Extraction et indexation. Sur l'article fourni, PostgreSQL contient 40 vecteurs de 1 024 dimensions (31 fragments de texte, 5 légendes de figures et 4 tableaux). Une recherche sur la complexité des couches a retrouvé le tableau 1 (page 6) en premier.
+- [x] Traitement des figures. La question sur l'encodeur et le décodeur retrouve la figure 1 (page 3) en premier. Une miniature de la figure 2 (240 × 152 pixels) retrouve cette figure (page 4) en premier avec CLIP.
+- [ ] Questions et réponses. Récupérer les passages utiles et produire une réponse fondée sur ces passages avec un modèle open source comme Qwen via Ollama.
+- [ ] Interface Streamlit. Charger un PDF, poser une question et afficher la réponse.
+- [ ] Agent LangChain. Choisir les outils de recherche, interroger l'index et utiliser les résultats pour répondre.
 
-Rejouer depuis ce dossier dans PowerShell, avec Docker et Ollama démarrés :
-    docker compose -p maintidoc_devoir up -d --wait
-    .\.venv\Scripts\python.exe indexer.py
-
-Pour une nouvelle installation, créer un environnement Python 3.12, installer
-requirements.txt, télécharger le modèle avec ollama pull qwen3-embedding:0.6b
-et créer le fichier .env avec une ligne POSTGRES_PASSWORD=<mot de passe local>.
-Le service écoute sur 127.0.0.1:55432. La base maintidoc et le volume Docker
-conservent les données entre deux lancements. Réindexer le même PDF remplace
-ses fragments dans une transaction.
-
-[x] Étape 2 vérifiée sur le PDF fourni. PostgreSQL contient 40 vecteurs de 1 024 dimensions (31 fragments, 5 figures, 4 tableaux). Une recherche sur la complexité des couches retrouve le tableau 1, page 6, en premier.
-
-Étape 3 — Traitement et recherche des figures
---------------------------------------------
-Après l'étape 2, lancer depuis ce dossier :
-    ollama pull qwen3.5:4b
-    .\.venv\Scripts\python.exe figures.py
-
-CLIP ViT-B/32 encode les pixels de chaque figure en 512 dimensions. Qwen3.5:4b
-lit le PNG et sa légende pour rédiger une description en français.
-qwen3-embedding:0.6b encode cette description en 1 024 dimensions.
-La table maintidoc_figures conserve les deux vecteurs, la description, les
-modèles utilisés, la page et le chemin du PNG. Une nouvelle exécution remplace
-les résultats de ce PDF après le traitement de toutes ses figures.
-
-Recherche textuelle sur les descriptions :
-    .\.venv\Scripts\python.exe figures.py --question "Quel schéma montre un encodeur et un décodeur ?"
-
-Recherche visuelle par distance cosinus entre vecteurs CLIP :
-    .\.venv\Scripts\python.exe figures.py --image chemin\vers\image.png
-
-Les deux commandes affichent les trois figures les plus proches avec leurs
-pages et descriptions. Les descriptions sont générées automatiquement.
-
-[x] Étape 3 vérifiée. La question sur l'encodeur et le décodeur retrouve la figure 1 (page 3). Une miniature de 240 × 152 pixels retrouve la figure 2 (page 4) par CLIP. Les deux arrivent en première position.
+La suite du projet prévoit le fine-tuning, l'orchestration avec MCP, puis les clients Web et Telegram ou Discord, la sécurité et le déploiement.
