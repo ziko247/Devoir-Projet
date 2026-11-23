@@ -1,4 +1,4 @@
-﻿"""Indexation du PDF de travail MaintiDoc, avec références aux pages physiques."""
+"""Indexation du PDF de travail MaintiDoc, avec références aux pages physiques."""
 import argparse
 import hashlib
 import json
@@ -30,6 +30,7 @@ class ArticleReader(BaseReader):
             for page in pdf:
                 blocks = page.get_text("blocks", sort=True)
                 occupied = []
+                previous_caption_end = 0
                 base = dict(source=path.name, page=page.number + 1, sha256=digest)
                 for block in blocks:
                     caption = " ".join(block[4].split())
@@ -43,7 +44,7 @@ class ArticleReader(BaseReader):
                                  if s["rect"].width > page.rect.width * .35
                                  and s["rect"].height < 2 and s["rect"].y0 >= block[3]]
                         if len(rules) < 2:
-                            raise ValueError(f"Limites du tableau {number} à vérifier")
+                            continue  # Garder le texte si les bordures du tableau sont indétectables.
                         box = pymupdf.Rect(min(r.x0 for r in rules)-1, min(r.y0 for r in rules)-1,
                                            max(r.x1 for r in rules)+1, max(r.y1 for r in rules)+1)
                         body = page.get_text(clip=box, sort=True).strip()
@@ -51,13 +52,14 @@ class ArticleReader(BaseReader):
                     else:
                         # La figure 2 comporte deux images. Les figures en annexe sont vectorielles.
                         images = [pymupdf.Rect(i["bbox"]) for i in page.get_image_info()
-                                  if i["bbox"][3] <= block[1]+2]
+                                  if previous_caption_end <= i["bbox"][1] and i["bbox"][3] <= block[1]+2]
                         if images:
                             box = pymupdf.Rect(images[0])
                             for rect in images[1:]:
                                 box |= rect
                         else:
-                            box = pymupdf.Rect(0, 48, page.rect.width, block[1])
+                            box = pymupdf.Rect(0, previous_caption_end or min(48, block[1] / 2), page.rect.width, block[1])
+                        previous_caption_end = block[3]
                         body = ""
                         kind = "figure"
                     asset = folder / f"{kind}-{number}.png"
@@ -100,17 +102,9 @@ def connexion():
 
 def index(path):
     digest, records = prepare(path)
+    if not records:
+        raise ValueError("Aucun texte exploitable. Utilise un PDF avec du texte sélectionnable.")
     print("Extraction", dict(Counter(m["type"] for _, m in records)), flush=True)
-    vectors = []
-    with httpx.Client(timeout=300, trust_env=False) as client:
-        for offset in range(0, len(records), 8):
-            batch = [t for t, _ in records[offset:offset+8]]
-            response = client.post("http://127.0.0.1:11434/api/embed",
-                                   json=dict(model=MODEL, input=batch, truncate=False))
-            response.raise_for_status()
-            vectors.extend(response.json()["embeddings"])
-    rows = [(digest, i, text, Jsonb(meta), MODEL, json.dumps(vec, allow_nan=False))
-            for i, ((text, meta), vec) in enumerate(zip(records, vectors, strict=True))]
     with connexion() as conn:
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         conn.execute("SELECT pg_advisory_xact_lock(170603762)")
@@ -119,8 +113,16 @@ def index(path):
             metadata jsonb NOT NULL, modele text NOT NULL, embedding vector(1024) NOT NULL,
             PRIMARY KEY(document_sha256, position))""")
         conn.execute("DELETE FROM maintidoc_fragments WHERE document_sha256=%s", (digest,))
-        with conn.cursor() as cur:
-            cur.executemany("INSERT INTO maintidoc_fragments VALUES (%s,%s,%s,%s,%s,%s::vector)", rows)
+        with conn.cursor() as cur, httpx.Client(timeout=300, trust_env=False) as client:
+            for offset in range(0, len(records), 8):
+                batch = records[offset:offset+8]
+                response = client.post("http://127.0.0.1:11434/api/embed", json=dict(
+                    model=MODEL, input=[text for text, _ in batch], truncate=False))
+                response.raise_for_status()
+                pairs = zip(batch, response.json()["embeddings"], strict=True)
+                rows = [(digest, i, text, Jsonb(meta), MODEL, json.dumps(vec, allow_nan=False))
+                        for i, ((text, meta), vec) in enumerate(pairs, start=offset)]
+                cur.executemany("INSERT INTO maintidoc_fragments VALUES (%s,%s,%s,%s,%s,%s::vector)", rows)
         print("Vecteurs et dimension", conn.execute("""SELECT count(*), min(vector_dims(embedding))
               FROM maintidoc_fragments WHERE document_sha256=%s""", (digest,)).fetchone())
 

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 import httpx
-from fastembed import ImageEmbedding
+
 
 from indexer import MODEL, ROOT, connexion
 
@@ -16,6 +16,8 @@ OLLAMA = "http://127.0.0.1:11434/api"
 
 
 def clip_model():
+    from fastembed import ImageEmbedding
+
     return ImageEmbedding(model_name=CLIP, cache_dir=str(ROOT / ".modeles"), threads=2)
 
 

@@ -34,6 +34,42 @@ PostgreSQL écoute sur `127.0.0.1:55432`. Docker conserve les données dans un v
 
 Chaque commande affiche les trois figures les plus proches, avec leur page et leur description. La première cherche dans les descriptions. La seconde compare les images par distance cosinus entre leurs vecteurs CLIP.
 
+## Interroger un PDF dans le navigateur
+
+Avec PostgreSQL et Ollama démarrés, lancer depuis la racine du projet :
+
+~~~powershell
+.\.venv\Scripts\python.exe -m streamlit run scripts/app.py
+~~~
+
+Ouvrir http://127.0.0.1:8501. L'article du devoir est disponible dès l'ouverture. Pour changer de document, charger un PDF de 20 Mo maximum, saisir une question et cliquer sur **Rechercher la réponse**. La première question déclenche l'indexation si nécessaire. Une réponse sourcée indique le fichier et la page. L'index reste dans PostgreSQL et les extraits dans `extraits/`.
+
+Le lecteur utilise le texte sélectionnable du PDF. La reconnaissance des figures et des tableaux est adaptée à la mise en page de l'article. Pour enrichir un autre PDF indexé avec les descriptions visuelles, utiliser `scripts/figures.py --pdf chemin\vers\document.pdf`.
+
+## Poser une question au PDF
+
+Depuis la racine, avec Ollama et PostgreSQL démarrés et les étapes 2 et 3 exécutées :
+
+~~~powershell
+.\.venv\Scripts\python.exe scripts\question.py "Quels scores BLEU le Transformer big obtient-il en anglais-allemand et en anglais-français ?"
+~~~
+
+La réponse attendue est 28,4 en anglais-allemand et 41,8 en anglais-français (tableau 2, page 8). Qwen choisit avec LangChain où chercher : dans le texte, les tableaux ou les figures. Chaque outil encode sa requête avec `qwen3-embedding:0.6b` et récupère jusqu'à trois extraits du PDF sélectionné dans pgvector. Qwen rédige ensuite sa réponse à partir de ces extraits. Les pages affichées proviennent des métadonnées des sources citées. L'option `--pdf` sélectionne un autre PDF déjà indexé.
+
+Dans Streamlit, poser « Quel score BLEU obtient le Transformer big en anglais-allemand ? », puis « Et pour le modèle de base sur la même traduction ? ». Les réponses attendues sont 28,4 et 27,3, toutes deux dans le tableau 2, page 8. L'interface affiche les outils appelés et garde les deux derniers échanges pour comprendre les relances. Changer de document efface cet historique.
+
+Sur une question portant sur le tableau 2, les modèles locaux 4B et 9B ont donné les deux bons scores. Ollama a mesuré 116 jetons/s pour le 4B et 69 pour le 9B pendant la génération. Le 4B occupe aussi moins de place sur disque (3,32 Go contre 6,55 Go).
+
+## Vérifier les corrections
+
+Pour comparer les résultats, essayer « Compare les tableaux 2 et 3 pour le Transformer de base en anglais-allemand ». Le tableau 2 donne 27,3 sur newstest2014 et le tableau 3 donne 25,8 sur newstest2013. Pour une question sur une figure, le modèle reçoit aussi le PNG avec sa légende. Après une mise à jour de l'extraction, relancer l'indexation puis le traitement des figures pour actualiser les fichiers déjà indexés.
+
+Les tests de régression couvrent le routage des tableaux, les réponses mal formées, les PNG envoyés au modèle, le découpage des figures et le changement de PDF après une relance. Ils fonctionnent sans PostgreSQL ni Ollama :
+
+~~~powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+~~~
+
 ## Organisation des fichiers
 
 - `data/1706.03762v7.pdf` contient l'article *Attention Is All You Need*, utilisé pour les premiers essais. Le document cible du devoir est un PDF technique de maintenance avec du texte, des images et des tableaux.
@@ -46,8 +82,8 @@ Chaque commande affiche les trois figures les plus proches, avec leur page et le
 - [x] Sélection du PDF de test.
 - [x] Extraction et indexation. Sur l'article fourni, PostgreSQL contient 40 vecteurs de 1 024 dimensions (31 fragments de texte, 5 légendes de figures et 4 tableaux). Une recherche sur la complexité des couches a retrouvé le tableau 1 (page 6) en premier.
 - [x] Traitement des figures. La question sur l'encodeur et le décodeur retrouve la figure 1 (page 3) en premier. Une miniature de la figure 2 (240 × 152 pixels) retrouve cette figure (page 4) en premier avec CLIP.
-- [ ] Questions et réponses. Récupérer les passages utiles et produire une réponse fondée sur ces passages avec un modèle open source comme Qwen via Ollama.
-- [ ] Interface Streamlit. Charger un PDF, poser une question et afficher la réponse.
-- [ ] Agent LangChain. Choisir les outils de recherche, interroger l'index et utiliser les résultats pour répondre.
+- [x] Questions et réponses avec Qwen via Ollama. Tests sur le tableau 2 (page 8), la figure 1 (page 3) et une question hors sujet sur un pneu de tracteur.
+- [x] Interface Streamlit. Chargement et question testés dans le navigateur sur l'article et sur une fiche PDF d'une page. La réponse cite la page du document sélectionné.
+- [x] Agent LangChain. Sélection des outils texte, tableau et figure vérifiée sur l'article, avec une relance comparative et une question hors sujet.
 
 La suite du projet prévoit le fine-tuning, l'orchestration avec MCP, puis les clients Web et Telegram ou Discord, la sécurité et le déploiement.

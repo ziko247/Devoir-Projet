@@ -2,3 +2,5 @@ llama-index-core==0.14.26
 PyMuPDF==2.1
 psycopg[binary]==3.3.9
 fastembed==0.9.1
+streamlit==1.67.0
+langchain-ollama==1.1.0
