@@ -20,13 +20,18 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class ArticleReader(BaseReader):
-    """Lecteur LlamaIndex pour les figures légendées et tableaux réglés de cet article."""
+    """Lecteur LlamaIndex de texte, de tableaux réglés et d’illustrations de manuels."""
 
     def load_data(self, path, digest):
         docs = []
         folder = ROOT / "extraits" / digest
         folder.mkdir(parents=True, exist_ok=True)
         with pymupdf.open(path) as pdf:
+            # Reserve printed numbers before numbering uncaptioned assets.
+            maxima = {"Figure": 0, "Table": 0}
+            for page in pdf:
+                for label, number in re.findall(r"^(Table|Figure) (\d+):", page.get_text(), re.M):
+                    maxima[label] = max(maxima[label], int(number))
             for page in pdf:
                 blocks = page.get_text("blocks", sort=True)
                 occupied = []
@@ -70,6 +75,35 @@ class ArticleReader(BaseReader):
                     docs.append(Document(text=content, metadata=dict(base, type=kind, numero=int(number),
                                          fichier=asset.relative_to(ROOT).as_posix())))
                     occupied.extend([box, pymupdf.Rect(block[:4])])
+                # Manuals often illustrate a step without a numbered caption.
+                def save_asset(label, kind, box, content):
+                    maxima[label] += 1
+                    number = maxima[label]
+                    asset = folder / f"{kind}-{number}.png"
+                    page.get_pixmap(matrix=pymupdf.Matrix(1.5, 1.5), clip=box).save(asset)
+                    docs.append(Document(text=content, metadata=dict(base, type=kind, numero=number,
+                                         fichier=asset.relative_to(ROOT).as_posix(), numero_local=True)))
+                    occupied.append(box)
+
+                for img in page.get_image_info():
+                    box = pymupdf.Rect(img["bbox"]) & page.rect
+                    if min(box.width, box.height) < 40 or any(r.intersects(box) for r in occupied):
+                        continue
+                    nearby = [b for b in blocks if b[6] == 0 and b[1] > 40 and b[3] < page.rect.height-45]
+                    nearby.sort(key=lambda b: min(abs(b[3]-box.y0), abs(b[1]-box.y1)))
+                    caption = " ".join(nearby[0][4].split()) if nearby else f"Illustration page {page.number+1}"
+                    save_asset("Figure", "figure", box, caption)
+                for table in page.find_tables(strategy="lines_strict").tables:
+                    box = pymupdf.Rect(table.bbox)
+                    if min(table.row_count, table.col_count) < 2 or any(r.intersects(box) for r in occupied):
+                        continue
+                    # Read cell text from the PDF to preserve firmware IDs and punctuation.
+                    rows = [" | ".join(page.get_textbox(cell).strip().replace("\n", " ") if cell else ""
+                                       for cell in row.cells) for row in table.rows]
+                    content = "\n".join(rows)
+                    if re.search(r"(?:\.\s*){6}", content):
+                        continue  # Dotted leaders in a table of contents.
+                    save_asset("Table", "tableau", box, content)
                 parts = [b[4].strip() for b in blocks if b[6] == 0 and b[4].strip()
                          and not any(rect.contains(pymupdf.Rect(b[:4]).tl + (2, 2)) for rect in occupied)]
                 if parts:
@@ -95,7 +129,7 @@ def connexion():
     if not password and not os.getenv("DATABASE_URL"):
         password = next(line.split("=", 1)[1] for line in (ROOT / ".env").read_text().splitlines()
                         if line.startswith("POSTGRES_PASSWORD="))
-    options = {} if os.getenv("DATABASE_URL") else dict(host="127.0.0.1", port=55432,
+    options = {} if os.getenv("DATABASE_URL") else dict(host="127.0.0.1", port=15432,
               dbname="maintidoc", user="postgres", password=password)
     return psycopg.connect(os.getenv("DATABASE_URL", ""), **options)
 
@@ -113,6 +147,8 @@ def index(path):
             metadata jsonb NOT NULL, modele text NOT NULL, embedding vector(1024) NOT NULL,
             PRIMARY KEY(document_sha256, position))""")
         conn.execute("DELETE FROM maintidoc_fragments WHERE document_sha256=%s", (digest,))
+        if conn.execute("SELECT to_regclass('maintidoc_figures')").fetchone()[0]:
+            conn.execute("DELETE FROM maintidoc_figures WHERE document_sha256=%s", (digest,))
         with conn.cursor() as cur, httpx.Client(timeout=300, trust_env=False) as client:
             for offset in range(0, len(records), 8):
                 batch = records[offset:offset+8]

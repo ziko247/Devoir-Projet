@@ -10,9 +10,10 @@ import pymupdf
 import streamlit as st
 
 from indexer import ROOT, connexion, index
+from figures import traiter
 from question import GenerationError, repondre_document
 
-EXEMPLE = ROOT / "data" / "1706.03762v7.pdf"
+EXEMPLE = ROOT / "data" / "nvidia-dgx-service.pdf"
 
 
 def deja_indexe(digest):
@@ -56,7 +57,7 @@ st.divider()
 left, right = st.columns([1, 1.4], gap="large")
 with left:
     st.subheader("Document")
-    upload = st.file_uploader("Charger un PDF", type=["pdf"], max_upload_size=20)
+    upload = st.file_uploader("Charger un PDF", type=["pdf"])
     name = upload.name if upload else EXEMPLE.name
     identity = upload.file_id if upload else "exemple"
     if st.session_state.get("document") != identity:
@@ -93,13 +94,16 @@ with right:
                             path = Path(directory) / "document.pdf"
                             path.write_bytes(upload.getbuffer())
                         index(path)
+                with st.spinner("Indexation des illustrations…"), httpx.Client(timeout=300, trust_env=False) as client:
+                    traiter(digest, client, si_manquant=True)
                 with st.spinner("Recherche des passages et rédaction…"):
                     trace = []
                     historique = st.session_state.get("historique", [])
-                    answer = repondre_document(question, digest, name, historique, trace)
+                    visuels = []
+                    answer = repondre_document(question, digest, name, historique, trace, visuels)
                 st.session_state.historique = (historique + [(question, answer)])[-2:]
                 st.session_state.outils = trace
-                st.session_state.resultat = (question, answer)
+                st.session_state.resultat = (question, answer, visuels)
             except (psycopg.Error, httpx.HTTPError, OSError):
                 logging.exception("Service local inaccessible")
                 st.error("Vérifiez PostgreSQL, le fichier .env et Ollama, puis réessayez.")
@@ -109,7 +113,7 @@ with right:
                 logging.exception("Traitement du document impossible")
                 st.error("La lecture du contenu ou la génération a échoué. Vérifiez que le PDF contient du texte et réessayez.")
     if "resultat" in st.session_state:
-        asked, answer = st.session_state.resultat
+        asked, answer, visuels = st.session_state.resultat
         st.caption("Outils consultés : " + ", ".join(st.session_state.get("outils", [])))
         st.subheader("Réponse")
         st.text(asked)
@@ -118,3 +122,8 @@ with right:
         if sources:
             st.subheader("Sources")
             st.text(sources)
+            for meta in visuels:
+                caption = f"{meta['type'].capitalize()} {meta['numero']} · page {meta['page']}"
+                st.image(str(ROOT / meta["fichier"]), caption=caption)
+                if meta.get("description"):
+                    st.write(meta["description"])

@@ -68,12 +68,36 @@ class RegressionTests(unittest.TestCase):
                         sizes.append(img.size)
             self.assertEqual(sizes, [(100, 40), (40, 40)])
 
+    def test_manual_without_numbered_captions(self):
+        with TemporaryDirectory() as tmp, patch.object(indexer, "ROOT", Path(tmp)):
+            path = Path(tmp) / "manual.pdf"
+            with pymupdf.open() as doc:
+                page = doc.new_page()
+                page.insert_text((40, 65), "Fan fault indicator")
+                buf = io.BytesIO()
+                Image.new("RGB", (100, 80), "blue").save(buf, format="PNG")
+                page.insert_image((40, 75, 140, 155), stream=buf.getvalue())
+                for x in (40, 160, 300):
+                    page.draw_line((x, 200), (x, 260))
+                for y in (200, 230, 260):
+                    page.draw_line((40, y), (300, y))
+                for x, y, text in [(45, 220, "Card"), (165, 220, "PSID"),
+                                   (45, 250, "Storage"), (165, 250, "MT_0000000892")]:
+                    page.insert_text((x, y), text)
+                doc.save(path)
+            docs = indexer.ArticleReader().load_data(path, "manual")
+            objects = {d.metadata["type"]: d for d in docs}
+            self.assertIn("Fan fault indicator", objects["figure"].text)
+            self.assertRegex(objects["tableau"].text, r"Storage[^\n]*MT_0000000892")
+            for kind in ("figure", "tableau"):
+                self.assertTrue((Path(tmp) / objects[kind].metadata["fichier"]).is_file())
+
     def test_new_upload_clears_followup_history(self):
         histories = []
-        def answer(q, digest, name, history, trace):
+        def answer(q, digest, name, history, trace, visuels):
             histories.append(list(history))
             return "Réponse"
-        with patch.object(question, "repondre_document", side_effect=answer), patch.object(indexer, "connexion"):
+        with patch.object(question, "repondre_document", side_effect=answer), patch("figures.traiter"), patch.object(indexer, "connexion"):
             app = AppTest.from_file(str(ROOT / "scripts/app.py")).run()
             for q in ("Première question", "Et pour le modèle de base ?"):
                 app.text_area[0].set_value(q)

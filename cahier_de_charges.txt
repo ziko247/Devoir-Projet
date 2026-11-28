@@ -29,7 +29,7 @@ puis stocker les vecteurs et métadonnées dans PGVector (PostgreSQL).
 3.   Traitement des images — Utiliser
 CLIP pour représenter les images et/ou faciliter leur recherche. Générer des
 descriptions textuelles des images et les indexer afin de les rendre
-interrogeables.
+interrogeables. 
 
 
 4.    Question-réponse et génération — Construire un pipeline RAG avec un LLM open source, par exemple Qwen

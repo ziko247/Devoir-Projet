@@ -9,7 +9,7 @@ import httpx
 
 from agent import GENERATEUR, retrouver
 from figures import post
-from indexer import ROOT
+from indexer import ROOT, connexion
 
 
 ABSENCE = "Les extraits retrouvés ne permettent pas de répondre à cette question."
@@ -23,7 +23,7 @@ def repondre(question, pdf):
     return repondre_document(question, hashlib.sha256(pdf.read_bytes()).hexdigest(), pdf.name)
 
 
-def repondre_document(question, digest, nom_source, historique=(), trace=None):
+def repondre_document(question, digest, nom_source, historique=(), trace=None, visuels=None):
     if not question.strip():
         raise ValueError("Saisis une question.")
     with httpx.Client(timeout=300, trust_env=False) as client:
@@ -71,6 +71,14 @@ def repondre_document(question, digest, nom_source, historique=(), trace=None):
     references = []
     for i in dict.fromkeys(ids):
         meta = passages[i-1][1]
+        if visuels is not None and meta.get("fichier"):
+            if meta["type"] == "figure":
+                with connexion() as conn:
+                    row = conn.execute("SELECT description FROM maintidoc_figures WHERE document_sha256=%s AND numero=%s",
+                                       (digest, meta["numero"])).fetchone()
+                if row:
+                    meta = dict(meta, description=row[0])
+            visuels.append(meta)
         label = f"{meta['type']} {meta.get('numero', meta['fragment'])}"
         references.append(f"{nom_source}, page {meta['page']} ({label})")
     return answer.strip() + "\n\nSources\n" + "\n".join(references)

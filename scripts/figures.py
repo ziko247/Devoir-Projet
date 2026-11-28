@@ -31,13 +31,17 @@ def embed_text(client, texts):
     return post(client, "embed", dict(model=MODEL, input=texts, truncate=False))["embeddings"]
 
 
-def traiter(digest, client):
+def traiter(digest, client, si_manquant=False):
     with connexion() as conn:
         figures = conn.execute("""SELECT metadata, contenu FROM maintidoc_fragments
             WHERE document_sha256=%s AND metadata->>'type'='figure'
             ORDER BY (metadata->>'numero')::int""", (digest,)).fetchall()
+        if si_manquant and conn.execute("SELECT to_regclass('maintidoc_figures')").fetchone()[0]:
+            count = conn.execute("SELECT count(*) FROM maintidoc_figures WHERE document_sha256=%s", (digest,)).fetchone()[0]
+            if count == len(figures):
+                return
     if not figures:
-        raise SystemExit("Aucune figure pour ce PDF. Exécutez d’abord indexer.py.")
+        return
     paths = [ROOT / meta["fichier"] for meta, _ in figures]
     visual = list(clip_model().embed(paths))
     descriptions = []

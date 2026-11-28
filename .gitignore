@@ -3,13 +3,21 @@
 /.env.*
 !/.env.example
 /.vscode/
+/.streamlit/secrets.toml
 
 # Python
 /.venv/
 __pycache__/
 *.pyc
+/.pytest_cache/
+/.coverage
+/htmlcov/
 
 # Fichiers generes par MaintiDoc
 /.modeles/
 /extraits/
 /.taste-skill/
+
+# Fichiers locaux hors démonstration
+~$*.docx
+/data/grizzly-g0602.pdf

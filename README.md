@@ -1,8 +1,18 @@
-﻿# MaintiDoc
+﻿# Projet : MaintiDoc
 
 MaintiDoc est un projet de cours autour d'un assistant pour les techniciens de maintenance. L'idée est de retrouver une information dans un manuel, une procédure, un schéma ou une photo, puis de répondre en citant la source. Plus tard, l'assistant pourra consulter l'historique des interventions via MCP et préparer un ticket. Un technicien habilité garde la main sur les équipements et valide la création du ticket.
 
 Exemple de demande : « Voici une photo du panneau de commande. Que signifie ce voyant orange ? Consulte les dernières interventions et prépare un ticket si nécessaire. »
+
+## Aperçu de l’interface
+
+### Interface générale
+
+![Interface Streamlit avec le chargement de PDF, l’aperçu du manuel NVIDIA et le formulaire de question](docs/screenshots/interface.png)
+
+### Exemple de réponse
+
+![Réponse sur le voyant de défaut du ventilateur avec la figure 3 et la référence à la page 15 du PDF](docs/screenshots/reponse.png)
 
 ## Installation
 
@@ -23,9 +33,30 @@ docker compose -p maintidoc_devoir up -d --wait
 .\.venv\Scripts\python.exe scripts\figures.py
 ~~~
 
-PostgreSQL écoute sur `127.0.0.1:55432`. Docker conserve les données dans un volume. Relancer un script remplace les résultats du même PDF dans une transaction.
+PostgreSQL écoute sur `127.0.0.1:15432`. Docker conserve les données dans un volume. Relancer un script remplace les résultats du même PDF dans une transaction.
 
 ## Tester la recherche
+
+### Démonstration sur un serveur d’IA
+
+Le document principal est le [manuel de maintenance NVIDIA DGX H100/H200](https://docs.nvidia.com/dgx/dgxh100-service-manual/dgxh100-service-manual.pdf), disponible dans `data/nvidia-dgx-service.pdf`. Il compte 150 pages. Les références ci-dessous indiquent la page physique du PDF, couverture comprise. Le lecteur attribue des numéros locaux aux illustrations et tableaux sans légende numérotée.
+
+Pour préparer la démonstration avant le cours, lancer ces deux commandes une fois. Streamlit utilise ensuite l’index existant.
+
+~~~powershell
+.\.venv\Scripts\python.exe scripts\indexer.py data\nvidia-dgx-service.pdf
+.\.venv\Scripts\python.exe scripts\figures.py --pdf data\nvidia-dgx-service.pdf
+~~~
+
+| Question à poser dans Streamlit | Réponse à vérifier | Source PDF |
+|---|---|---|
+| Combien de temps dure le test de stress pre-flight recommandé et quels composants teste-t-il ? | Environ 20 minutes pour les GPU, le CPU, la mémoire et le stockage. | Page 11 |
+| Sur la figure 3, où se trouve le voyant de défaut du ventilateur ? | Dans le coin supérieur droit du module défaillant. | Page 15, illustration |
+| Quel est le PSID de la carte ConnectX-7 Storage dans le tableau 1 ? | `MT_0000000892`. La ligne Cluster donne un autre identifiant. | Page 87, tableau |
+
+Vérification sur le manuel complet : 183 fragments de texte, 178 illustrations et un tableau technique, soit 362 entrées dans `maintidoc_fragments`. Les 178 illustrations disposent aussi d’un vecteur CLIP et d’une description indexée dans `maintidoc_figures`. Un essai avec Streamlit AppTest, PostgreSQL et Ollama locaux a vérifié le chargement du manuel, les trois pages citées et l’affichage des deux extraits visuels.
+
+### Recherche sur l’article Transformer
 
 ~~~powershell
 .\.venv\Scripts\python.exe scripts\figures.py --question "Quel schéma montre un encodeur et un décodeur ?"
@@ -42,9 +73,9 @@ Avec PostgreSQL et Ollama démarrés, lancer depuis la racine du projet :
 .\.venv\Scripts\python.exe -m streamlit run scripts/app.py
 ~~~
 
-Ouvrir http://127.0.0.1:8501. L'article du devoir est disponible dès l'ouverture. Pour changer de document, charger un PDF de 20 Mo maximum, saisir une question et cliquer sur **Rechercher la réponse**. La première question déclenche l'indexation si nécessaire. Une réponse sourcée indique le fichier et la page. L'index reste dans PostgreSQL et les extraits dans `extraits/`.
+Ouvrir http://127.0.0.1:8501. Le manuel NVIDIA DGX H100/H200 est disponible dès l'ouverture. Pour changer de document, charger un PDF de 64 Mo maximum, saisir une question et cliquer sur **Rechercher la réponse**. La première question déclenche l'indexation si nécessaire. Une réponse sourcée indique le fichier et la page. L'index reste dans PostgreSQL et les extraits dans `extraits/`.
 
-Le lecteur utilise le texte sélectionnable du PDF. La reconnaissance des figures et des tableaux est adaptée à la mise en page de l'article. Pour enrichir un autre PDF indexé avec les descriptions visuelles, utiliser `scripts/figures.py --pdf chemin\vers\document.pdf`.
+Le lecteur utilise le texte sélectionnable du PDF. Les illustrations sans numéro imprimé reçoivent un identifiant local. Le lecteur associe le texte voisin à chaque image et détecte les tableaux avec bordures. Un scan sans couche de texte, un tableau sans bordures ou une illustration vectorielle sans légende peuvent nécessiter une vérification manuelle. Streamlit lance la description des figures à la première question et affiche les illustrations ou tableaux cités avec leur page PDF.
 
 ## Poser une question au PDF
 
@@ -56,7 +87,7 @@ Depuis la racine, avec Ollama et PostgreSQL démarrés et les étapes 2 et 3 ex�
 
 La réponse attendue est 28,4 en anglais-allemand et 41,8 en anglais-français (tableau 2, page 8). Qwen choisit avec LangChain où chercher : dans le texte, les tableaux ou les figures. Chaque outil encode sa requête avec `qwen3-embedding:0.6b` et récupère jusqu'à trois extraits du PDF sélectionné dans pgvector. Qwen rédige ensuite sa réponse à partir de ces extraits. Les pages affichées proviennent des métadonnées des sources citées. L'option `--pdf` sélectionne un autre PDF déjà indexé.
 
-Dans Streamlit, poser « Quel score BLEU obtient le Transformer big en anglais-allemand ? », puis « Et pour le modèle de base sur la même traduction ? ». Les réponses attendues sont 28,4 et 27,3, toutes deux dans le tableau 2, page 8. L'interface affiche les outils appelés et garde les deux derniers échanges pour comprendre les relances. Changer de document efface cet historique.
+Dans Streamlit, charger l’article de test puis poser « Quel score BLEU obtient le Transformer big en anglais-allemand ? », puis « Et pour le modèle de base sur la même traduction ? ». Les réponses attendues sont 28,4 et 27,3, toutes deux dans le tableau 2, page 8. L'interface affiche les outils appelés et garde les deux derniers échanges pour comprendre les relances. Changer de document efface cet historique.
 
 Sur une question portant sur le tableau 2, les modèles locaux 4B et 9B ont donné les deux bons scores. Ollama a mesuré 116 jetons/s pour le 4B et 69 pour le 9B pendant la génération. Le 4B occupe aussi moins de place sur disque (3,32 Go contre 6,55 Go).
 
@@ -72,8 +103,8 @@ Les tests de régression couvrent le routage des tableaux, les réponses mal for
 
 ## Organisation des fichiers
 
-- `data/1706.03762v7.pdf` contient l'article *Attention Is All You Need*, utilisé pour les premiers essais. Le document cible du devoir est un PDF technique de maintenance avec du texte, des images et des tableaux.
-- `scripts/indexer.py` extrait le contenu avec un lecteur LlamaIndex adapté à l'article. Il indexe les fragments, les tableaux et les légendes dans pgvector avec `qwen3-embedding:0.6b`.
+- `data/nvidia-dgx-service.pdf` est le manuel principal. `data/1706.03762v7.pdf` contient l'article *Attention Is All You Need*, utilisé pour les premiers essais et les comparaisons de tableaux.
+- `scripts/indexer.py` extrait le contenu avec un lecteur LlamaIndex basé sur PyMuPDF. Il indexe les fragments, les tableaux et le texte associé aux illustrations dans pgvector avec `qwen3-embedding:0.6b`.
 - `scripts/figures.py` encode les PNG avec CLIP ViT-B/32 (512 dimensions). Qwen3.5:4b décrit chaque figure en français à partir de son PNG et de sa légende. `qwen3-embedding:0.6b` encode les descriptions (1 024 dimensions). La table `maintidoc_figures` conserve les deux vecteurs, la description, les modèles, la page et le chemin du PNG.
 - `extraits/` reçoit les PNG et le texte des tableaux. Les PNG gardent les symboles et les exposants visibles pour vérification. `.modeles/` contient le cache CLIP. Les scripts créent ces deux dossiers au besoin.
 
